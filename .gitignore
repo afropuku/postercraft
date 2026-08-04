@@ -1,0 +1,15 @@
+# Python / Virtual environment
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Streamlit config / cache
+.streamlit/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Generated zips or test outputs
+*.zip
