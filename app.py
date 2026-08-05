@@ -2,7 +2,6 @@ import streamlit as st
 from PIL import Image, ImageOps
 import io
 import zipfile
-import json
 
 # ページ基本設定
 st.set_page_config(page_title="CraftPoster Web", page_icon="🖼️", layout="wide")
@@ -72,7 +71,7 @@ if uploaded_files:
             with c1:
                 w_blocks = st.number_input(f"横幅 (ブロック数)", min_value=1, max_value=16, value=2, key=f"w_{idx}")
             with c2:
-                h_blocks = st.number_input(f"高さ (ブロック数)", min_value=1, max_value=16, value=1, key=f"h_{idx}")
+                h_blocks = st.number_input(f"高さ (ブロック数)", min_value=1, max_value=1, value=1, key=f"h_{idx}")
             
             # 画像のトリミング・リサイズ処理を実行
             processed_img = process_image(raw_img, w_blocks, h_blocks, px_per_block, crop_mode)
@@ -135,8 +134,8 @@ if uploaded_files:
                 
                 placeable_variants.append(f"{namespace}:{p_id}")
             
-            # placeable.json タグ登録（json.dumpsを使用）
-            placeable_json_content = json.dumps({"values": placeable_variants})
+            # placeable.json タグ登録
+            placeable_json_content = f'{{"values":{str(placeable_variants).replace("\'", '"')}}}'
             zip_file.writestr("datapack/data/minecraft/tags/painting_variant/placeable.json", placeable_json_content)
 
         st.success("🎉 パックの作成が完了しました！")
