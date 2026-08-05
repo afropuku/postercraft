@@ -1,352 +1,148 @@
-import io
-import json
-import os
-import shutil
-import zipfile
-from PIL import Image
 import streamlit as st
+from PIL import Image, ImageOps
+import io
+import zipfile
+import json
 
-# ==========================================
-# 定数・初期設定
-# ==========================================
-DEFAULT_MC_PATH = os.path.expanduser(r"~\AppData\Roaming\.minecraft")
-DEFAULT_RP_NAME = "custom_resources"
-DEFAULT_DP_NAME = "custom_pack"
-DEFAULT_NAMESPACE = "poster"
+# ページ基本設定
+st.set_page_config(page_title="CraftPoster Web", page_icon="🖼️", layout="wide")
 
-st.set_page_config(
-    page_title="CraftPoster Web - マイクラポスター生成ツール",
-    page_icon="🖼️",
-    layout="wide",
+st.title("🖼️ CraftPoster Web")
+st.write("Minecraft 1.21.4+ 向けカスタム絵画＆アイテム生成ツール")
+
+# サイドバー：設定オプション
+st.sidebar.header("⚙️ 設定オプション")
+
+# 1. 解像度設定（1ブロックあたりのピクセル数）
+px_per_block = st.sidebar.selectbox(
+    "1ブロックあたりの解像度 (px)",
+    options=[16, 32, 64, 128],
+    index=0,
+    help="標準のマイクラ解像度は16pxです。高い値にすると高精細になります。"
 )
 
-# カスタムCSSでデザイン調整
-st.markdown(
-    """
-    <style>
-    .main-title {
-        font-size: 2.2rem;
-        font-weight: 700;
-        color: #2e7d32;
-        margin-bottom: 0.5rem;
-    }
-    .sub-title {
-        font-size: 1.0rem;
-        color: #555;
-        margin-bottom: 2rem;
-    }
-    .stButton>button {
-        width: 100%;
-        border-radius: 8px;
-        height: 3em;
-        font-weight: bold;
-    }
-    </style>
-""",
-    unsafe_allow_html=True,
+# 2. トリミング・リサイズモード選択
+crop_mode = st.sidebar.radio(
+    "画像調整モード",
+    options=["自動センタークロップ (アスペクト比維持)", "変形（全域を伸ばしてフィット）"],
+    index=0,
+    help="「自動センタークロップ」を選ぶと、指定したサイズ比率に合わせて画像の中央を切り抜き、引き伸ばし・歪みを防ぎます。"
 )
 
-
-def ensure_dir(path):
-    os.makedirs(path, exist_ok=True)
-
-
-def clean_id(filename: str) -> str:
-    """ファイル名からアルファベット・数字・アンダースコアのみのIDを抽出"""
-    name_without_ext = os.path.splitext(filename)[0]
-    cleaned = "".join(
-        c.lower() for c in name_without_ext if c.isalnum() or c in ("_", "-")
-    )
-    return cleaned if cleaned else "poster_item"
-
-
-def create_pack_mcmeta(description: str, pack_format: int):
-    return {"pack": {"pack_format": pack_format, "description": description}}
-
-
-def build_packs(
-    posters_data,
-    mc_path,
-    world_name,
-    rp_name,
-    dp_name,
-    namespace,
-    mode="local",
-):
-    """
-    データパック・リソースパックの生成処理
-    mode="local": PCの.minecraftフォルダに直接出力
-    mode="zip": メモリ上のZipバイナリとして出力
-    """
-    rp_base = os.path.join(mc_path, "resourcepacks", rp_name)
-    dp_base = os.path.join(mc_path, "saves", world_name, "datapacks", dp_name)
-
-    placeable_ids = []
-    zip_buffer = io.BytesIO() if mode == "zip" else None
-    zf = zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) if mode == "zip" else None
-
-    # pack.mcmeta の作成
-    rp_mcmeta = create_pack_mcmeta("CraftPoster Custom Resource Pack", 48)
-    dp_mcmeta = create_pack_mcmeta("CraftPoster Custom Data Pack", 61)
-
-    if mode == "local":
-        ensure_dir(rp_base)
-        ensure_dir(dp_base)
-        with open(
-            os.path.join(rp_base, "pack.mcmeta"), "w", encoding="utf-8"
-        ) as f:
-            json.dump(rp_mcmeta, f, indent=2)
-        with open(
-            os.path.join(dp_base, "pack.mcmeta"), "w", encoding="utf-8"
-        ) as f:
-            json.dump(dp_mcmeta, f, indent=2)
+# 画像処理関数
+def process_image(img: Image.Image, width_blocks: int, height_blocks: int, px_per_block: int, mode: str) -> Image.Image:
+    # 最終的な目標解像度（ピクセル）
+    target_w = width_blocks * px_per_block
+    target_h = height_blocks * px_per_block
+    
+    # RGBAへ変換（透過対応）
+    img = img.convert("RGBA")
+    
+    if mode == "自動センタークロップ (アスペクト比維持)":
+        # 目的のアスペクト比に合わせて中央をトリミング＆リサイズ
+        processed_img = ImageOps.fit(img, (target_w, target_h), method=Image.Resampling.LANCZOS)
     else:
-        zf.writestr(
-            f"resourcepacks/{rp_name}/pack.mcmeta", json.dumps(rp_mcmeta, indent=2)
-        )
-        zf.writestr(
-            f"datapacks/{dp_name}/pack.mcmeta", json.dumps(dp_mcmeta, indent=2)
-        )
+        # 画像全体をリサイズ（アスペクト比無視）
+        processed_img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+        
+    return processed_img
 
-    for item in posters_data:
-        p_id = item["id"]
-        width = item["width"]
-        height = item["height"]
-        img_bytes = item["img_bytes"]
-
-        full_asset_id = f"{namespace}:{p_id}"
-        placeable_ids.append(full_asset_id)
-
-        # 1. 画像ファイルのコピー (item & painting)
-        for sub_dir in ["item", "painting"]:
-            rel_img_path = f"assets/{namespace}/textures/{sub_dir}/{p_id}.png"
-            if mode == "local":
-                dst_dir = os.path.join(
-                    rp_base, "assets", namespace, "textures", sub_dir
-                )
-                ensure_dir(dst_dir)
-                with open(os.path.join(dst_dir, f"{p_id}.png"), "wb") as f:
-                    f.write(img_bytes)
-            else:
-                zf.writestr(f"resourcepacks/{rp_name}/{rel_img_path}", img_bytes)
-
-        # 2. assets/{namespace}/items/{id}.json (リソースパック)
-        items_json = {
-            "model": {
-                "type": "minecraft:model",
-                "model": f"{namespace}:item/{p_id}",
-            }
-        }
-        if mode == "local":
-            items_dir = os.path.join(rp_base, "assets", namespace, "items")
-            ensure_dir(items_dir)
-            with open(
-                os.path.join(items_dir, f"{p_id}.json"), "w", encoding="utf-8"
-            ) as f:
-                json.dump(items_json, f, indent=2)
-        else:
-            zf.writestr(
-                f"resourcepacks/{rp_name}/assets/{namespace}/items/{p_id}.json",
-                json.dumps(items_json, indent=2),
-            )
-
-        # 3. assets/{namespace}/models/item/{id}.json (リソースパック)
-        models_json = {
-            "parent": "minecraft:item/generated",
-            "textures": {"layer0": f"{namespace}:item/{p_id}"},
-        }
-        if mode == "local":
-            models_dir = os.path.join(
-                rp_base, "assets", namespace, "models", "item"
-            )
-            ensure_dir(models_dir)
-            with open(
-                os.path.join(models_dir, f"{p_id}.json"), "w", encoding="utf-8"
-            ) as f:
-                json.dump(models_json, f, indent=2)
-        else:
-            zf.writestr(
-                f"resourcepacks/{rp_name}/assets/{namespace}/models/item/{p_id}.json",
-                json.dumps(models_json, indent=2),
-            )
-
-        # 4. data/{namespace}/painting_variant/{id}.json (データパック)
-        variant_json = {
-            "asset_id": full_asset_id,
-            "width": width,
-            "height": height,
-        }
-        if mode == "local":
-            dp_variant_dir = os.path.join(
-                dp_base, "data", namespace, "painting_variant"
-            )
-            ensure_dir(dp_variant_dir)
-            with open(
-                os.path.join(dp_variant_dir, f"{p_id}.json"), "w", encoding="utf-8"
-            ) as f:
-                json.dump(variant_json, f, indent=2)
-        else:
-            zf.writestr(
-                f"datapacks/{dp_name}/data/{namespace}/painting_variant/{p_id}.json",
-                json.dumps(variant_json, indent=2),
-            )
-
-    # 5. data/minecraft/tags/painting_variant/placeable.json (一括更新)
-    placeable_json = {"values": placeable_ids}
-    if mode == "local":
-        tag_dir = os.path.join(
-            dp_base, "data", "minecraft", "tags", "painting_variant"
-        )
-        ensure_dir(tag_dir)
-        with open(
-            os.path.join(tag_dir, "placeable.json"), "w", encoding="utf-8"
-        ) as f:
-            json.dump(placeable_json, f, indent=2)
-    else:
-        zf.writestr(
-            f"datapacks/{dp_name}/data/minecraft/tags/painting_variant/placeable.json",
-            json.dumps(placeable_json, indent=2),
-        )
-
-    if mode == "zip":
-        zf.close()
-        zip_buffer.seek(0)
-        return zip_buffer.getvalue()
-
-
-# ==========================================
-# UIメイン画面
-# ==========================================
-st.markdown(
-    '<div class="main-title">🖼️ CraftPoster Web</div>', unsafe_allow_html=True
-)
-st.markdown(
-    '<div class="sub-title">マイクラ（1.21.4 / 26.x対応）ポスター＆カスタム絵画全自動作成ツール</div>',
-    unsafe_allow_html=True,
-)
-
-# サイドバー: マイクラの設定
-st.sidebar.header("⚙️ マイクラ接続設定")
-mc_path = st.sidebar.text_input("マイクラフォルダ (.minecraft)", DEFAULT_MC_PATH)
-world_name = st.sidebar.text_input("ワールド名", "新しい世界")
-namespace = st.sidebar.text_input("ネームスペース (IDプレフィックス)", DEFAULT_NAMESPACE)
-rp_name = st.sidebar.text_input("リソースパック名", DEFAULT_RP_NAME)
-dp_name = st.sidebar.text_input("データパック名", DEFAULT_DP_NAME)
-
-st.sidebar.markdown("---")
-st.sidebar.info(
-    "💡 **ヒント**: 将来的にWebサーバーに公開する際は、Zipダウンロード機能を利用することでサーバーへのファイル書き込みなしで動作します。"
-)
-
-# メインコンテンツエリア
-st.header("1. ポスター画像の一括アップロード")
-uploaded_files = st.file_uploader(
-    "画像ファイルをドラッグ＆ドロップまたは選択してください (.png, .jpg, .jpeg)",
-    type=["png", "jpg", "jpeg"],
-    accept_multiple_files=True,
-)
-
-posters_config = []
+# メイン画面：画像アップロード
+uploaded_files = st.file_uploader("ポスターにしたい画像をアップロードしてください", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
 
 if uploaded_files:
-    st.header("2. ポスター個別のIDとサイズ設定")
-    st.caption("マイクラ内でのブロック数（幅×高さ）やIDを調整してください。")
+    st.subheader("📋 ポスター個別設定")
+    
+    processed_data_list = []
+    
+    for idx, uploaded_file in enumerate(uploaded_files):
+        col1, col2 = st.columns([1, 2])
+        
+        # アップロードされた元画像を開く
+        raw_img = Image.open(uploaded_file)
+        
+        with col1:
+            st.image(raw_img, caption=f"元画像: {uploaded_file.name}", use_column_width=True)
+            
+        with col2:
+            default_id = f"poster_{idx+1}"
+            poster_id = st.text_input(f"ポスターID (小文字英数・アンダースコア)", value=default_id, key=f"id_{idx}")
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                w_blocks = st.number_input(f"横幅 (ブロック数)", min_value=1, max_value=16, value=2, key=f"w_{idx}")
+            with c2:
+                h_blocks = st.number_input(f"高さ (ブロック数)", min_value=1, max_value=16, value=1, key=f"h_{idx}")
+            
+            # 画像のトリミング・リサイズ処理を実行
+            processed_img = process_image(raw_img, w_blocks, h_blocks, px_per_block, crop_mode)
+            
+            # プレビュー表示
+            st.write(f"🎮 出力サイズ: {w_blocks * px_per_block} x {h_blocks * px_per_block} px")
+            st.image(processed_img, caption="生成プレビュー", width=min(w_blocks * px_per_block * 3, 300))
+            
+            processed_data_list.append({
+                "id": poster_id,
+                "w": w_blocks,
+                "h": h_blocks,
+                "img": processed_img
+            })
+        st.divider()
 
-    for idx, file in enumerate(uploaded_files):
-        default_id = clean_id(file.name)
-        img_bytes = file.read()
-        image = Image.open(io.BytesIO(img_bytes))
+    # パック生成処理（Zipダウンロード用）
+    if st.button("🚀 パック生成 (Zipダウンロード)", type="primary"):
+        zip_buffer = io.BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            namespace = "custom_poster"
+            
+            # mcmeta作成
+            zip_file.writestr("resourcepack/pack.mcmeta", '{"pack":{"pack_format":48,"description":"Custom Poster Resources"}}')
+            zip_file.writestr("datapack/pack.mcmeta", '{"pack":{"pack_format":61,"description":"Custom Poster Data"}}')
+            
+            placeable_variants = []
 
-        col_img, col_form = st.columns([1, 3])
-
-        with col_img:
-            st.image(image, caption=f"プレビュー ({image.width}x{image.height} px)", use_container_width=True)
-
-        with col_form:
-            p_col1, p_col2, p_col3 = st.columns([2, 1, 1])
-            with p_col1:
-                p_id = st.text_input(
-                    f"ポスターID #{idx+1}",
-                    value=default_id,
-                    key=f"id_{idx}",
-                    help="英数字とアンダースコアのみ使用可能です。",
+            for data in processed_data_list:
+                p_id = data["id"]
+                w = data["w"]
+                h = data["h"]
+                img = data["img"]
+                
+                # 画像をBytesに変換して追加
+                img_byte_arr = io.BytesIO()
+                img.save(img_byte_arr, format='PNG')
+                img_bytes = img_byte_arr.getvalue()
+                
+                # テクスチャ
+                zip_file.writestr(f"resourcepack/assets/{namespace}/textures/item/{p_id}.png", img_bytes)
+                zip_file.writestr(f"resourcepack/assets/{namespace}/textures/painting/{p_id}.png", img_bytes)
+                
+                # 1.21.4 item_model & model
+                zip_file.writestr(
+                    f"resourcepack/assets/{namespace}/items/{p_id}.json",
+                    f'{{"model":{{"type":"minecraft:model","model":"{namespace}:item/{p_id}"}}}}'
                 )
-            with p_col2:
-                width = st.number_input(
-                    "幅 (ブロック)",
-                    min_value=1,
-                    max_value=16,
-                    value=1,
-                    key=f"w_{idx}",
+                zip_file.writestr(
+                    f"resourcepack/assets/{namespace}/models/item/{p_id}.json",
+                    f'{{"parent":"minecraft:item/generated","textures":{{"layer0":"{namespace}:item/{p_id}"}}}}'
                 )
-            with p_col3:
-                height = st.number_input(
-                    "高さ (ブロック)",
-                    min_value=1,
-                    max_value=16,
-                    value=1,
-                    key=f"h_{idx}",
+                
+                # Data Pack: painting_variant
+                zip_file.writestr(
+                    f"datapack/data/{namespace}/painting_variant/{p_id}.json",
+                    f'{{"width":{w},"height":{h},"asset_id":"{namespace}:{p_id}"}}'
                 )
+                
+                placeable_variants.append(f"{namespace}:{p_id}")
+            
+            # placeable.json タグ登録（json.dumpsを使用）
+            placeable_json_content = json.dumps({"values": placeable_variants})
+            zip_file.writestr("datapack/data/minecraft/tags/painting_variant/placeable.json", placeable_json_content)
 
-            posters_config.append(
-                {
-                    "id": p_id,
-                    "width": int(width),
-                    "height": int(height),
-                    "img_bytes": img_bytes,
-                }
-            )
-
-        st.markdown("---")
-
-    # 3. 実行アクション
-    st.header("3. データパック・リソースパックの生成")
-
-    btn_col1, btn_col2 = st.columns(2)
-
-    with btn_col1:
-        if st.button("🚀 PCのマイクラフォルダへ直接生成・配置"):
-            if not os.path.exists(mc_path):
-                st.error(f"マイクラフォルダが見つかりません: {mc_path}")
-            else:
-                try:
-                    build_packs(
-                        posters_config,
-                        mc_path,
-                        world_name,
-                        rp_name,
-                        dp_name,
-                        namespace,
-                        mode="local",
-                    )
-                    st.success("🎉 マイクラへの自動配置が完了しました！")
-                    st.info("🎮 **マイクラ内での操作**:\n1. チャットで `/reload` を実行\n2. 以下の入手コマンドを実行:")
-
-                    for p in posters_config:
-                        cmd = f'/give @s minecraft:painting[minecraft:painting/variant="{namespace}:{p["id"]}", minecraft:item_model="{namespace}:{p["id"]}"]'
-                        st.code(cmd, language="mcfunction")
-                except Exception as e:
-                    st.error(f"生成中にエラーが発生しました: {e}")
-
-    with btn_col2:
-        try:
-            zip_data = build_packs(
-                posters_config,
-                mc_path,
-                world_name,
-                rp_name,
-                dp_name,
-                namespace,
-                mode="zip",
-            )
-            st.download_button(
-                label="📦 Pack一式をZipファイルでダウンロード",
-                data=zip_data,
-                file_name="CraftPoster_Packs.zip",
-                mime="application/zip",
-            )
-        except Exception as e:
-            st.error(f"Zip生成エラー: {e}")
-
-else:
-    st.info("👆 上のエリアに画像をアップロードすると設定項目が表示されます。")
+        st.success("🎉 パックの作成が完了しました！")
+        st.download_button(
+            label="📦 生成したパックをダウンロード (.zip)",
+            data=zip_buffer.getvalue(),
+            file_name="CraftPoster_Packs.zip",
+            mime="application/zip"
+        )
