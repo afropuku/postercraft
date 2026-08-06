@@ -71,31 +71,27 @@ if uploaded_files:
                 # アスペクト比を float (数値) に計算
                 aspect_ratio_val = float(w_blocks) / float(h_blocks) if h_blocks > 0 else 1.0
                 
-                # RGBに安全変換
-                raw_img_rgb = raw_img.convert("RGB")
+                # RGBAへの事前変換でエラー回避
+                raw_img_rgba = raw_img.convert("RGBA")
                 
-                try:
-                    # st_cropper 呼び出し
-                    cropped_img = st_cropper(
-                        raw_img_rgb,
-                        realtime_update=True,
-                        box_color='#FF0000',
-                        aspect_ratio=aspect_ratio_val,
-                        frame_width=2,
-                        key=f"cropper_{idx}"
-                    )
-                except Exception as e:
-                    # クロップ処理中にエラーが起きた場合は元画像をフォールバック使用
-                    cropped_img = raw_img_rgb
+                # st_cropper 呼び出し（型エラー・変形防止のためアスペクト比固定）
+                cropped_img = st_cropper(
+                    raw_img_rgba,
+                    realtime_update=True,
+                    box_color='#FF0000',
+                    aspect_ratio=aspect_ratio_val,
+                    frame_width=2,
+                    key=f"cropper_{idx}_{uploaded_file.name}"
+                )
                 
                 # 目標解像度（px）にリサイズ
                 target_w_px = w_blocks * px_per_block
                 target_h_px = h_blocks * px_per_block
                 
-                if isinstance(cropped_img, Image.Image):
-                    final_processed_img = cropped_img.convert("RGBA").resize((target_w_px, target_h_px), Image.Resampling.LANCZOS)
+                if cropped_img is not None:
+                    final_processed_img = cropped_img.resize((target_w_px, target_h_px), Image.Resampling.LANCZOS)
                 else:
-                    final_processed_img = raw_img.convert("RGBA").resize((target_w_px, target_h_px), Image.Resampling.LANCZOS)
+                    final_processed_img = raw_img_rgba.resize((target_w_px, target_h_px), Image.Resampling.LANCZOS)
                     
             else:
                 # 変形モード
