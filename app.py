@@ -12,18 +12,12 @@ st.set_page_config(page_title="CraftPoster Web", page_icon="🖼️", layout="wi
 st.title("🖼️ CraftPoster Web")
 st.write("Minecraft 1.21.4+ 向けカスタム絵画＆アイテム生成ツール")
 
-# Cropper.js のモーダル（切り抜き範囲外）オーバーレイ色をカスタマイズ
-st.markdown(
-    """
-    <style>
-    /* 切り抜き範囲の外側を半透明の暗いグレーにする */
-    .cropper-modal {
-        background-color: rgba(0, 0, 0, 0.6) !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# 外部 CSS 読み込み（拡張しやすいスタイル管理）
+def load_local_css(file_name: str) -> None:
+    with open(file_name, "r", encoding="utf-8") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+load_local_css("styles.css")
 
 # ==========================================
 # サイドバー：設定オプション

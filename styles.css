@@ -1,0 +1,18 @@
+/* 外側のオーバーレイを半透明暗グレーにする */
+.cropper-modal {
+  background-color: rgba(0, 0, 0, 0.65) !important;
+}
+
+/* 選択範囲の輪郭を強調 */
+.cropper-container .cropper-view-box,
+.cropper-container .cropper-face {
+  outline: 2px solid rgba(255, 255, 255, 0.85) !important;
+  outline-offset: -2px;
+}
+
+/* ドラッグハンドルを視認しやすく */
+.cropper-container .cropper-line,
+.cropper-container .cropper-point {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+  border: 1px solid rgba(0, 0, 0, 0.2) !important;
+}
