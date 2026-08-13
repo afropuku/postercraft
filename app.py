@@ -217,7 +217,7 @@ if uploaded_files:
                 cropped_img = st_cropper(
                     crop_target_img,
                     realtime_update=True,
-                    box_color='#FF0000',
+                    box_color='#FFFFFF',
                     aspect_ratio=crop_aspect,
                     box_algorithm=centered_box_algorithm,
                     key=crop_key
