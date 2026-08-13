@@ -1,6 +1,8 @@
 import io
 import json
 import zipfile
+from typing import Tuple
+
 import streamlit as st
 from PIL import Image
 from streamlit_cropper import st_cropper
@@ -43,6 +45,57 @@ def resize_image_stretch(img: Image.Image, width_blocks: int, height_blocks: int
     target_w = width_blocks * px_per_block
     target_h = height_blocks * px_per_block
     return img.convert("RGBA").resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+
+def resolve_crop_aspect_ratio(width_blocks: int, height_blocks: int) -> Tuple[int, int]:
+    """トリミング枠のアスペクト比をブロックサイズの比率から計算する"""
+    width = max(1, int(width_blocks))
+    height = max(1, int(height_blocks))
+    return (width, height)
+
+
+def centered_box_algorithm(img: Image.Image, aspect_ratio: Tuple[int, int] = None):
+    """初期トリミング枠を画像中央に配置する box_algorithm 互換関数"""
+    img_w, img_h = img.size
+
+    if aspect_ratio is None:
+        aspect_ratio = (1, 1)
+
+    target_w, target_h = map(float, aspect_ratio)
+    target_ratio = target_w / target_h
+
+    # 画像の50%サイズを基準として、アスペクト比に合わせた枠を計算
+    max_crop_w = int(img_w * 0.5)
+    max_crop_h = int(img_h * 0.5)
+
+    # アスペクト比を保ちながら、max_crop_w と max_crop_h を超えないサイズに調整
+    base_ratio = img_w / img_h
+    
+    if target_ratio > base_ratio:
+        # 横が長い比率
+        crop_h = max_crop_h
+        crop_w = int(crop_h * target_ratio)
+        if crop_w > max_crop_w:
+            crop_w = max_crop_w
+            crop_h = int(crop_w / target_ratio)
+    else:
+        # 縦が長い比率
+        crop_w = max_crop_w
+        crop_h = int(crop_w / target_ratio)
+        if crop_h > max_crop_h:
+            crop_h = max_crop_h
+            crop_w = int(crop_h * target_ratio)
+
+    # 中央に配置
+    left = (img_w - crop_w) // 2
+    top = (img_h - crop_h) // 2
+
+    return {
+        "left": left,
+        "top": top,
+        "width": crop_w,
+        "height": crop_h,
+    }
 
 # ==========================================
 # ZIPパッケージ自動生成関数 (1.21.4+対応)
@@ -151,14 +204,23 @@ if uploaded_files:
             
             col1, col2 = st.columns([1, 1])
             
+            default_id = f"poster_{idx + 1}"
+            poster_id = st.text_input("ポスターID", value=default_id, key=f"id_{idx}")
+            width_b = st.number_input("横サイズ (ブロック)", min_value=1, max_value=16, value=1, key=f"w_{idx}")
+            height_b = st.number_input("縦サイズ (ブロック)", min_value=1, max_value=16, value=1, key=f"h_{idx}")
+            crop_aspect = resolve_crop_aspect_ratio(width_b, height_b)
+            # サイズ変更時に枠を再生成するため、crop_key に width/height を含める
+            crop_key = f"cropper_{idx}_{uploaded_file.name}_{width_b}_{height_b}"
+
             with col1:
                 st.write("✂️ **トリミング範囲を選択**")
                 cropped_img = st_cropper(
                     crop_target_img,
                     realtime_update=True,
                     box_color='#FF0000',
-                    aspect_ratio=None,
-                    key=f"cropper_{idx}_{uploaded_file.name}"
+                    aspect_ratio=crop_aspect,
+                    box_algorithm=centered_box_algorithm,
+                    key=crop_key
                 )
             
             with col2:
@@ -166,13 +228,6 @@ if uploaded_files:
                 if cropped_img is not None:
                     cropped_rgba = cropped_img.convert("RGBA")
                     
-                    # ポスター設定入力
-                    default_id = f"poster_{idx + 1}"
-                    poster_id = st.text_input("ポスターID", value=default_id, key=f"id_{idx}")
-                    width_b = st.number_input("横サイズ (ブロック)", min_value=1, max_value=16, value=1, key=f"w_{idx}")
-                    height_b = st.number_input("縦サイズ (ブロック)", min_value=1, max_value=16, value=1, key=f"h_{idx}")
-                    
-                    # リサイズ処理
                     resized_result = resize_image_stretch(cropped_rgba, width_b, height_b, px_per_block)
                     st.image(resized_result, caption=f"出力プレビュー ({width_b*px_per_block}x{height_b*px_per_block}px)", use_container_width=True)
                     
