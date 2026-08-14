@@ -4,7 +4,7 @@ import zipfile
 from typing import Tuple
 
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageFilter
 from streamlit_cropper import st_cropper
 
 # ==========================================
@@ -26,11 +26,30 @@ load_local_css("styles.css")
 # ==========================================
 st.sidebar.header("⚙️ 設定オプション")
 
+# 0. ポスターの質感/タイプ選択
+poster_type = st.sidebar.selectbox(
+    "ポスターの質感/タイプ",
+    options=[
+        "ドット絵風 (マイクラバニラ調)",
+        "リアルイラスト・写真風 (HD高画質)"
+    ],
+    index=0,
+    help="ポスターのスタイルを選択してください。選択に応じて解像度と画像処理方式が自動で切り替わります。"
+)
+
+# ポスタータイプに応じて px_per_block の選択肢を動的に変更
+if poster_type == "ドット絵風 (マイクラバニラ調)":
+    px_per_block_options = [16, 32]
+    px_per_block_default_index = 0
+else:  # リアルイラスト・写真風 (HD高画質)
+    px_per_block_options = [64, 128, 256]
+    px_per_block_default_index = 1
+
 # 1. 解像度設定（1ブロックあたりのピクセル数）
 px_per_block = st.sidebar.selectbox(
     "1ブロックあたりの解像度 (px)",
-    options=[16, 32, 64, 128],
-    index=0,
+    options=px_per_block_options,
+    index=px_per_block_default_index,
     help="標準のマイクラ解像度は16pxです。高い値にすると高精細になります。"
 )
 
@@ -40,11 +59,39 @@ namespace = st.sidebar.text_input("ネームスペース (namespace)", value="cu
 # ==========================================
 # 画像処理関数
 # ==========================================
-def resize_image_stretch(img: Image.Image, width_blocks: int, height_blocks: int, px_per_block: int) -> Image.Image:
-    """指定されたブロック数に合わせて変形（ストレッチ）リサイズを行う"""
+def resize_image_stretch(
+    img: Image.Image, 
+    width_blocks: int, 
+    height_blocks: int, 
+    px_per_block: int,
+    resample_mode: Image.Resampling = Image.Resampling.LANCZOS,
+    apply_sharpen: bool = False
+) -> Image.Image:
+    """指定されたブロック数に合わせて変形（ストレッチ）リサイズを行う
+    
+    Args:
+        img: 入力画像（PIL Image）
+        width_blocks: 横ブロック数
+        height_blocks: 縦ブロック数
+        px_per_block: 1ブロックあたりのピクセル数
+        resample_mode: リサイズ補間アルゴリズム（デフォルト: LANCZOS）
+        apply_sharpen: シャープ化処理を適用するか（デフォルト: False）
+    
+    Returns:
+        処理後の画像（RGBA）
+    """
     target_w = width_blocks * px_per_block
     target_h = height_blocks * px_per_block
-    return img.convert("RGBA").resize((target_w, target_h), Image.Resampling.LANCZOS)
+    
+    # 1. RGBA変換 & リサイズ
+    resized_img = img.convert("RGBA").resize((target_w, target_h), resample_mode)
+    
+    # 2. シャープ化処理（必要に応じて適用）
+    if apply_sharpen:
+        # 軽めのシャープ化（UnsharpMask）で品質を向上
+        resized_img = resized_img.filter(ImageFilter.SMOOTH_MORE).filter(ImageFilter.SHARPEN)
+    
+    return resized_img
 
 
 def resolve_crop_aspect_ratio(width_blocks: int, height_blocks: int) -> Tuple[int, int]:
@@ -228,7 +275,22 @@ if uploaded_files:
                 if cropped_img is not None:
                     cropped_rgba = cropped_img.convert("RGBA")
                     
-                    resized_result = resize_image_stretch(cropped_rgba, width_b, height_b, px_per_block)
+                    # ポスタータイプに応じた処理パラメータを決定
+                    if poster_type == "ドット絵風 (マイクラバニラ調)":
+                        resample_mode = Image.Resampling.NEAREST
+                        apply_sharpen = False
+                    else:  # リアルイラスト・写真風 (HD高画質)
+                        resample_mode = Image.Resampling.LANCZOS
+                        apply_sharpen = True
+                    
+                    resized_result = resize_image_stretch(
+                        cropped_rgba, 
+                        width_b, 
+                        height_b, 
+                        px_per_block,
+                        resample_mode=resample_mode,
+                        apply_sharpen=apply_sharpen
+                    )
                     st.image(resized_result, caption=f"出力プレビュー ({width_b*px_per_block}x{height_b*px_per_block}px)", use_container_width=True)
                     
                     processed_posters.append({
